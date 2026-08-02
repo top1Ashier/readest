@@ -14,6 +14,7 @@ import {
   READEST_UPDATER_FILE,
   READEST_NIGHTLY_UPDATER_FILE,
 } from '@/services/constants';
+import { AUTOMATIC_UPDATES_ENABLED } from '@/services/community';
 
 const LAST_CHECK_KEY = 'lastAppUpdateCheck';
 
@@ -140,6 +141,7 @@ export const checkForAppUpdates = async (
   isAutoCheck = true,
   updateChannel: 'stable' | 'nightly' = 'stable',
 ): Promise<boolean> => {
+  if (!AUTOMATIC_UPDATES_ENABLED) return false;
   const lastCheck = localStorage.getItem(LAST_CHECK_KEY);
   const now = Date.now();
   if (isAutoCheck && lastCheck && now - parseInt(lastCheck, 10) < CHECK_UPDATE_INTERVAL_SEC * 1000)
@@ -218,6 +220,7 @@ export const getLastShownReleaseNotesVersion = () => {
 };
 
 export const checkAppReleaseNotes = async (isAutoCheck = true) => {
+  if (!AUTOMATIC_UPDATES_ENABLED) return false;
   const currentVersion = getAppVersion();
   const lastShownVersion = getLastShownReleaseNotesVersion();
   if ((lastShownVersion && semver.gt(currentVersion, lastShownVersion)) || !isAutoCheck) {

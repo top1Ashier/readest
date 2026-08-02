@@ -55,6 +55,7 @@ import type { FileSyncBackendKind } from '@/services/sync/file/providerRegistry'
 import { canBackendRun } from '@/services/sync/file/runLibrarySync';
 import SubPageHeader from './SubPageHeader';
 import { BoxedList, NavigationRow, SectionTitle, SettingLabel, Tips } from './primitives';
+import { OFFICIAL_ACCOUNTS_ENABLED, OFFICIAL_CLOUD_ENABLED } from '@/services/community';
 
 type SubPage =
   | 'kosync'
@@ -111,8 +112,7 @@ const IntegrationsPanel: React.FC = () => {
   // once the plan resolves). An entitled user already has it, so the badge is
   // noise. Suppressing it while a signed-in user's plan is still loading avoids
   // flashing the chip at a premium user on every open.
-  const premiumBadge =
-    !user || (userProfilePlan !== undefined && !isCloudSyncPremium) ? _('Premium') : undefined;
+  const premiumBadge = isCloudSyncPremium ? undefined : _('Premium');
 
   const [subPage, setSubPage] = useState<SubPage>(null);
 
@@ -216,9 +216,7 @@ const IntegrationsPanel: React.FC = () => {
                 })}
               </li>
               <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
+                {_('App settings, reading statistics, and dictionaries stay on this device.')}
               </li>
             </Tips>
           </div>
@@ -246,9 +244,7 @@ const IntegrationsPanel: React.FC = () => {
                 })}
               </li>
               <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
+                {_('App settings, reading statistics, and dictionaries stay on this device.')}
               </li>
             </Tips>
           </div>
@@ -278,9 +274,7 @@ const IntegrationsPanel: React.FC = () => {
             }
             {
               <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
+                {_('App settings, reading statistics, and dictionaries stay on this device.')}
               </li>
             }
             {
@@ -320,16 +314,14 @@ const IntegrationsPanel: React.FC = () => {
                 })}
               </li>
               <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
+                {_('App settings, reading statistics, and dictionaries stay on this device.')}
               </li>
             </Tips>
           </div>
         )}
       </div>
     );
-  if (subPage === 'readest-cloud')
+  if (OFFICIAL_CLOUD_ENABLED && subPage === 'readest-cloud')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -371,7 +363,7 @@ const IntegrationsPanel: React.FC = () => {
         <CatalogManager inSubPage />
       </div>
     );
-  if (subPage === 'send')
+  if (OFFICIAL_ACCOUNTS_ENABLED && subPage === 'send')
     return (
       <div className='my-4 w-full'>
         <SendToReadestForm onBack={() => setSubPage(null)} />
@@ -507,19 +499,20 @@ const IntegrationsPanel: React.FC = () => {
             role='group'
             aria-label={_('Cloud sync providers')}
           >
-            <CloudProviderRow
-              icon={RiCloudFill}
-              title={_('Readest Cloud')}
-              status={readestStatus}
-              checked={!!user && readestEnabled}
-              canToggle={!!user}
-              onToggle={(next) => toggleCloudProvider('readest', next)}
-              onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
-              toggleLabel={_('Sync with Readest Cloud')}
-            />
-            {/* Third-party providers are premium: every row carries the tier
-                badge; on a free plan the checkbox is disabled and opening a
-                row routes to the upgrade page instead of the config sub-page. */}
+            {OFFICIAL_CLOUD_ENABLED && (
+              <CloudProviderRow
+                icon={RiCloudFill}
+                title={_('Readest Cloud')}
+                status={readestStatus}
+                checked={!!user && readestEnabled}
+                canToggle={!!user}
+                onToggle={(next) => toggleCloudProvider('readest', next)}
+                onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
+                toggleLabel={_('Sync with Readest Cloud')}
+              />
+            )}
+            {/* Community builds make third-party providers available to every
+                local user; the shared gate remains for upstream compatibility. */}
             {(appService?.isDesktopApp ||
               appService?.isAndroidApp ||
               appService?.isIOSApp ||
@@ -607,9 +600,7 @@ const IntegrationsPanel: React.FC = () => {
                 )}
               </li>
               <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
+                {_('App settings, reading statistics, and dictionaries stay on this device.')}
               </li>
             </Tips>
           </div>
@@ -626,17 +617,19 @@ const IntegrationsPanel: React.FC = () => {
               status={opdsStatus}
               onClick={() => setSubPage('opds')}
             />
-            <IntegrationRow
-              icon={RiSendPlaneLine}
-              title={_('Send to Readest')}
-              status={_('Email books to your library')}
-              onClick={() => setSubPage('send')}
-            />
+            {OFFICIAL_ACCOUNTS_ENABLED && (
+              <IntegrationRow
+                icon={RiSendPlaneLine}
+                title={_('Send to Readest')}
+                status={_('Email books to your library')}
+                onClick={() => setSubPage('send')}
+              />
+            )}
           </div>
         </div>
       </div>
 
-      {appService?.isDesktopApp && (
+      {OFFICIAL_ACCOUNTS_ENABLED && appService?.isDesktopApp && (
         <div className='w-full' data-setting-id='settings.integrations.discord'>
           <SectionTitle className='mb-2'>{_('Discord')}</SectionTitle>
           <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>

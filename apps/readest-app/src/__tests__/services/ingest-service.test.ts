@@ -6,6 +6,13 @@ vi.mock('@/services/transferManager', () => ({
   transferManager: { queueUpload: vi.fn() },
 }));
 
+// These tests cover the generic native-cloud upload decision. The community
+// build's global OFF switch is covered by cloudSyncProvider.test.ts.
+vi.mock('@/services/community', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/community')>()),
+  OFFICIAL_CLOUD_ENABLED: true,
+}));
+
 import { ingestFile } from '@/services/ingestService';
 import { transferManager } from '@/services/transferManager';
 import type { Book } from '@/types/book';

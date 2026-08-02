@@ -13,6 +13,13 @@ vi.mock('@/utils/event', () => ({
   },
 }));
 
+// Exercise the generic Readest Cloud transfer queue independently from the
+// community build's global provider switch.
+vi.mock('@/services/community', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/community')>()),
+  OFFICIAL_CLOUD_ENABLED: true,
+}));
+
 // After the module-level mock declarations, import the SUT
 import { transferManager } from '@/services/transferManager';
 import { eventDispatcher } from '@/utils/event';

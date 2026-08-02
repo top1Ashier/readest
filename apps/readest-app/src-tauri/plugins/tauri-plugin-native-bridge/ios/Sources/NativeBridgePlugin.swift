@@ -635,7 +635,7 @@ class NativeBridgePlugin: Plugin {
 
   /// Bridge between the Readest Share Extension (separate process) and
   /// the host app's JS, via the App Group container at
-  /// `group.com.bilingify.readest`. Two directions on every activation:
+  /// `group.io.github.top1ashier.readest`. Two directions on every activation:
   ///
   ///   1. Groups (host → extension). Read the current library group list
   ///      from JS (`window.__readestGetGroups`) and persist it so the
@@ -1302,7 +1302,7 @@ class NativeBridgePlugin: Plugin {
   // CryptoSession reads/writes via these commands so the user's sync
   // passphrase persists across app launches.
 
-  private static let syncKeychainService = "com.bilingify.readest.sync-passphrase"
+  private static let syncKeychainService = "io.github.top1ashier.readest.sync-passphrase"
   private static let syncKeychainAccount = "default"
 
   private func syncKeychainBaseQuery() -> [String: Any] {
@@ -1380,7 +1380,7 @@ class NativeBridgePlugin: Plugin {
   // store: one service, the caller's `key` as the account, so secrets
   // like the Google Drive token set persist the same way.
 
-  private static let secureItemsService = "com.bilingify.readest.secure-items"
+  private static let secureItemsService = "io.github.top1ashier.readest.secure-items"
 
   private func secureItemBaseQuery(_ key: String) -> [String: Any] {
     return [

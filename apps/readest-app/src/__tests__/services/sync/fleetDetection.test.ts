@@ -104,17 +104,18 @@ describe('checkMixedFleetOnce', () => {
     expect(vi.mocked(eventDispatcher.dispatch)).not.toHaveBeenCalled();
   });
 
-  test('does not probe when Readest Cloud is enabled alongside a backend', async () => {
+  test('ignores the stored Readest Cloud flag and probes the backend in community mode', async () => {
     const pullChanges = vi.fn();
     const settings = {
       readestCloud: { enabled: true },
       googleDrive: { enabled: true, providerSelectedAt: 1000 },
     } as unknown as SystemSettings;
 
+    pullChanges.mockResolvedValue({ books: [] });
     expect(await checkMixedFleetOnce({ pullChanges } as never, settings, translationFn)).toBe(
       false,
     );
-    expect(pullChanges).not.toHaveBeenCalled();
+    expect(pullChanges).toHaveBeenCalledWith(1000, 'books', undefined, undefined, 1);
   });
 
   test('probes since readestCloud.disabledAt when Readest Cloud is off', async () => {

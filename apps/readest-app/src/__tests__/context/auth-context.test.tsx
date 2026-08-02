@@ -18,12 +18,11 @@ vi.mock('posthog-js', () => ({
 }));
 
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { supabase } from '@/utils/supabase';
 
 describe('AuthContext memoization', () => {
   beforeEach(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.clear();
-    }
+    window.localStorage?.clear();
   });
 
   afterEach(() => {
@@ -98,5 +97,22 @@ describe('AuthContext memoization', () => {
     expect(last.login).toBe(prev.login);
     expect(last.logout).toBe(prev.logout);
     expect(last.refresh).toBe(prev.refresh);
+  });
+
+  test('does not initialize or refresh an official Readest account session', () => {
+    function Probe() {
+      const { user, token } = useAuth();
+      return <span>{user === null && token === null ? 'local' : 'remote'}</span>;
+    }
+
+    const { getByText } = render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+
+    expect(getByText('local')).toBeTruthy();
+    expect(supabase.auth.onAuthStateChange).not.toHaveBeenCalled();
+    expect(supabase.auth.refreshSession).not.toHaveBeenCalled();
   });
 });

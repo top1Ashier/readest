@@ -135,11 +135,9 @@ const TTSPlayerSheet = ({
   // download controls. Mirrors the cloud-sync paywall in IntegrationsPanel.
   const { userProfilePlan } = useQuotaStats();
   const isDownloadPremium = isTTSCacheAllowed(userProfilePlan ?? 'free');
-  // Only badge users who can't use it yet: signed out (known at once), or a
-  // resolved plan without the feature. Suppress it while a signed-in user's
-  // plan is still loading so it never flashes at an entitled user.
-  const premiumBadge =
-    !user || (userProfilePlan !== undefined && !isDownloadPremium) ? _('Premium') : undefined;
+  // Community builds allow offline audio on every plan, so this resolves to
+  // no badge and the row opens directly for signed-in and local-only users.
+  const premiumBadge = isDownloadPremium ? undefined : _('Premium');
 
   const [view, setView] = useState<SheetView>('main');
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);

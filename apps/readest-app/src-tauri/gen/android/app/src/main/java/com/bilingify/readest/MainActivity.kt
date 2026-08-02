@@ -1,4 +1,4 @@
-package com.bilingify.readest
+package io.github.top1ashier.readest
 
 import android.os.Build
 import android.os.Bundle

@@ -60,6 +60,13 @@ vi.mock('@/services/constants', () => ({
   READEST_NIGHTLY_UPDATER_FILE: 'https://example.com/nightly/latest.json',
 }));
 
+// Preserve coverage of the generic updater implementation. Community-mode
+// disabling is covered by services/community.test.ts.
+vi.mock('@/services/community', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/community')>()),
+  AUTOMATIC_UPDATES_ENABLED: true,
+}));
+
 import {
   checkForAppUpdates,
   checkAppReleaseNotes,

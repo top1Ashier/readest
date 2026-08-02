@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+// Keep the provider-routing unit cases meaningful while the community-wide
+// OFF switch is verified separately in cloudSyncProvider.test.ts.
+vi.mock('@/services/community', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/community')>()),
+  OFFICIAL_CLOUD_ENABLED: true,
+}));
 
 import {
   SYNC_CATEGORIES,

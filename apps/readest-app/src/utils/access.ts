@@ -1,10 +1,10 @@
 import { jwtDecode } from 'jwt-decode';
-import { supabase } from '@/utils/supabase';
 import { UserPlan } from '@/types/quota';
 import { DEFAULT_DAILY_TRANSLATION_QUOTA, DEFAULT_STORAGE_QUOTA } from '@/services/constants';
 import { isWebAppPlatform } from '@/services/environment';
 import { getDailyUsage } from '@/services/translators/utils';
 import { getRuntimeConfig } from '@/services/runtimeConfig';
+import { OFFICIAL_ACCOUNTS_ENABLED } from '@/services/community';
 
 interface Token {
   plan: UserPlan;
@@ -65,7 +65,7 @@ export const isCloudSyncInPlan = (plan: UserPlan): boolean =>
  * Every gate goes through {@link isCloudSyncAllowed}, so this flag is the
  * whole toggle.
  */
-export const CLOUD_SYNC_REQUIRES_PREMIUM = true;
+export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 
 /**
  * Whether third-party cloud sync is available for a plan. Falls back to the
@@ -93,7 +93,7 @@ export const isTTSCacheInPlan = (plan: UserPlan): boolean =>
  * automatic playback cache (audio kept as the user listens) is unaffected —
  * only the explicit download UI is gated.
  */
-export const TTS_CACHE_REQUIRES_PREMIUM = true;
+export const TTS_CACHE_REQUIRES_PREMIUM = false;
 
 export const isTTSCacheAllowed = (plan: UserPlan): boolean =>
   !TTS_CACHE_REQUIRES_PREMIUM || isTTSCacheInPlan(plan);
@@ -152,29 +152,35 @@ export const getDailyTranslationPlanData = (token: string) => {
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
+  if (!OFFICIAL_ACCOUNTS_ENABLED) return null;
   // In browser context there might be two instances of supabase one in the app route
   // and the other in the pages route, and they might have different sessions
   // making the access token invalid for API calls. In that case we should use localStorage.
   if (isWebAppPlatform()) {
     return localStorage.getItem('token') ?? null;
   }
+  const { supabase } = await import('@/utils/supabase');
   const { data } = await supabase.auth.getSession();
   return data?.session?.access_token ?? null;
 };
 
 export const getUserID = async (): Promise<string | null> => {
+  if (!OFFICIAL_ACCOUNTS_ENABLED) return null;
   if (isWebAppPlatform()) {
     const user = localStorage.getItem('user') ?? '{}';
     return JSON.parse(user).id ?? null;
   }
+  const { supabase } = await import('@/utils/supabase');
   const { data } = await supabase.auth.getSession();
   return data?.session?.user?.id ?? null;
 };
 
 export const validateUserAndToken = async (authHeader: string | null | undefined) => {
+  if (!OFFICIAL_ACCOUNTS_ENABLED) return {};
   if (!authHeader) return {};
 
   const token = authHeader.replace('Bearer ', '');
+  const { supabase } = await import('@/utils/supabase');
   const {
     data: { user },
     error,

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Readest",
+  "productName": "Readest Community",
   "mainBinaryName": "readest",
-  "identifier": "com.bilingify.readest",
+  "identifier": "io.github.top1ashier.readest",
   "version": "../package.json",
   "build": {
     "frontendDist": "../out",
@@ -72,7 +72,6 @@
       "minSdkVersion": 26
     },
     "iOS": {
-      "developmentTeam": "J5W48D69VR",
       "infoPlist": "./Info-ios.plist",
       "minimumSystemVersion": "15.0"
     },
@@ -141,7 +140,7 @@
         "role": "Viewer"
       }
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "fs": {
@@ -186,26 +185,11 @@
         {
           "scheme": ["readest-onedrive"],
           "appLink": false
-        },
-        {
-          "scheme": ["com.googleusercontent.apps.209390247301-ctpmep68ppfa56r1b8tr35e4qi4p60kq"],
-          "appLink": false
         }
       ],
       "desktop": {
-        "schemes": [
-          "readest",
-          "readest-onedrive",
-          "com.googleusercontent.apps.209390247301-ctpmep68ppfa56r1b8tr35e4qi4p60kq"
-        ]
+        "schemes": ["readest", "readest-onedrive"]
       }
-    },
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJFMEQ1QjE2OEU1NEIzNTEKUldSUnMxU09GbHNOdmpEaWFMT1crRFpEV2VORzQ2MklxaFc0M1R0ci9xY2c1bENXS0xhM1R1L2sK",
-      "endpoints": [
-        "https://download.readest.com/releases/latest.json",
-        "https://github.com/readest/readest/releases/latest/download/latest.json"
-      ]
     },
     "webview-upgrade": {
       "minUpgradeMajor": 121,

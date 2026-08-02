@@ -10,6 +10,13 @@ vi.mock('@/utils/event', () => ({
   },
 }));
 
+// Exercise the transfer manager's upstream provider transitions independently
+// from the community build's global Readest Cloud switch.
+vi.mock('@/services/community', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/community')>()),
+  OFFICIAL_CLOUD_ENABLED: true,
+}));
+
 import { transferManager } from '@/services/transferManager';
 import { eventDispatcher } from '@/utils/event';
 import type { Book } from '@/types/book';

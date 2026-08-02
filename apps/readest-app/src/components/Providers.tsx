@@ -41,6 +41,7 @@ import { upgradeToKeychainIfAvailable } from '@/libs/crypto/passphrase';
 import { cryptoSession } from '@/libs/crypto/session';
 import { useAppLockStore } from '@/store/appLockStore';
 import { initSettingsSync } from '@/services/sync/replicaSettingsSync';
+import { TELEMETRY_ENABLED } from '@/services/community';
 
 // One-time, on first launch after this feature ships, decide how to handle
 // PostHog telemetry for the current install:
@@ -144,12 +145,14 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
       appService.loadSettings().then(async (settings) => {
         const globalViewSettings = settings.globalViewSettings;
         const hadSettingsFile = await hadSettingsFilePromise.catch(() => false);
-        finalizeTelemetryDecision({
-          appService,
-          settings,
-          isNewUser: !hadSettingsFile,
-          onShowPrompt: () => setShowTelemetryConsent(true),
-        });
+        if (TELEMETRY_ENABLED) {
+          finalizeTelemetryDecision({
+            appService,
+            settings,
+            isNewUser: !hadSettingsFile,
+            onShowPrompt: () => setShowTelemetryConsent(true),
+          });
+        }
         applyUILanguage(globalViewSettings.uiLanguage);
         // Seed the customTextureStore with the disk-loaded textures (preserving
         // their saved ids) so the boot-time applyBackgroundTexture below can
