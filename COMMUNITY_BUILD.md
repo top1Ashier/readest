@@ -51,6 +51,13 @@ Linux distributions ship system libraries with newer ELF features that the
 `linuxdeploy` tool bundled by Tauri cannot strip; the application and DEB can
 still compile there, but AppImage packaging may fail with a `.relr.dyn` error.
 
+The community workflow also wraps the Ubuntu-built binary in an Arch Linux
+package named `readest-community-bin`. Install the downloaded package with:
+
+```bash
+sudo pacman -U readest-community-bin-*.pkg.tar.zst
+```
+
 ## iOS unsigned build and self-signing
 
 Apple's toolchain only builds iOS apps on macOS. The project is pinned to Tauri
@@ -76,6 +83,9 @@ widget are included but cannot share upstream App Group data.
 
 ## GitHub Actions
 
-Run **Actions → Community builds → Run workflow**. Linux and unsigned iOS
-artifacts are retained for 14 days. The workflow needs no repository secrets.
-An unsigned IPA still must be signed locally before installation.
+Run **Actions → Community builds → Run workflow** and select the Linux and/or
+iOS inputs. A `community-v*` tag builds all platforms; a
+`community-ios-v*` tag retries only the unsigned IPA. Linux AppImage, DEB,
+pacman, and unsigned iOS artifacts are retained for 14 days. The workflow needs
+no repository secrets. An unsigned IPA still must be signed locally before
+installation.

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Readest Community
+Comment=Local-first ebook reader
+Exec=readest-community %U
+Icon=readest-community
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/epub+zip;application/pdf;application/x-mobipocket-ebook;

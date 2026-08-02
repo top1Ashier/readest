@@ -1,0 +1,35 @@
+pkgname=readest-community-bin
+pkgver=0.11.20
+pkgrel=1
+pkgdesc='Local-first community build of the Readest ebook reader'
+arch=('x86_64')
+url='https://github.com/top1Ashier/readest'
+license=('AGPL-3.0-or-later')
+depends=(
+  'fontconfig'
+  'gtk3'
+  'libappindicator'
+  'libsecret'
+  'librsvg'
+  'openssl'
+  'webkit2gtk-4.1'
+)
+options=('!strip')
+source=()
+sha256sums=()
+_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+package() {
+  install -Dm755 \
+    "${_repo_root}/target/x86_64-unknown-linux-gnu/release/readest" \
+    "${pkgdir}/usr/bin/readest-community"
+  install -Dm644 \
+    "${_repo_root}/packaging/arch/readest-community.desktop" \
+    "${pkgdir}/usr/share/applications/readest-community.desktop"
+  install -Dm644 \
+    "${_repo_root}/apps/readest-app/src-tauri/icons/128x128.png" \
+    "${pkgdir}/usr/share/icons/hicolor/128x128/apps/readest-community.png"
+  install -Dm644 \
+    "${_repo_root}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
