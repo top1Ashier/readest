@@ -230,8 +230,6 @@
     "allow-update-book-presence",
     "allow-clear-book-presence",
     "allow-clip-url",
-    "allow-spawn-fresh-browser",
-    "allow-verify-update-signature",
-    "allow-install-nightly-update"
+    "allow-spawn-fresh-browser"
   ]
 }
