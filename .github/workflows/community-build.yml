@@ -212,10 +212,10 @@ jobs:
           tag="$GITHUB_REF_NAME"
           title="Readest Community $tag"
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "$title" --notes "Community build artifacts for $tag. This is an unofficial community build."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes "Community build artifacts for $tag. This is an unofficial community build."
           else
-            gh release create "$tag" --verify-tag --title "$title" --notes "Community build artifacts for $tag. This is an unofficial community build."
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$title" --notes "Community build artifacts for $tag. This is an unofficial community build."
           fi
 
           mapfile -t assets < <(find release-assets -type f \( \
@@ -229,4 +229,4 @@ jobs:
             exit 1
           fi
           printf 'Uploading assets:\n%s\n' "${assets[@]}"
-          gh release upload "$tag" "${assets[@]}" --clobber
+          gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber

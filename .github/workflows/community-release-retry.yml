@@ -49,7 +49,9 @@ jobs:
         run: |
           set -euo pipefail
           trigger_tag="$GITHUB_REF_NAME"
-          target_tag="community-v${trigger_tag#community-release-v}"
+          target_version="${trigger_tag#community-release-v}"
+          target_version="${target_version%-r*}"
+          target_tag="community-v$target_version"
 
           mapfile -t assets < <(find release-assets -type f \( \
             -name '*.AppImage' -o \
@@ -62,7 +64,7 @@ jobs:
             exit 1
           fi
           printf 'Uploading assets to %s:\n%s\n' "$target_tag" "${assets[@]}"
-          gh release edit "$target_tag" \
+          gh release edit "$target_tag" --repo "$GITHUB_REPOSITORY" \
             --title "Readest Community $target_tag" \
             --notes "Community build artifacts for $target_tag. This is an unofficial community build."
-          gh release upload "$target_tag" "${assets[@]}" --clobber
+          gh release upload "$target_tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
