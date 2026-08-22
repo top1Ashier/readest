@@ -1,5 +1,5 @@
 pkgname=readest-community-bin
-pkgver=0.11.20
+pkgver=0.12.1
 pkgrel=1
 pkgdesc='Local-first community build of the Readest ebook reader'
 arch=('x86_64')
