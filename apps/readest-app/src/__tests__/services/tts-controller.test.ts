@@ -16,7 +16,10 @@ vi.mock('@/services/tts/WebSpeechClient', () => ({
 
 vi.mock('@/services/tts/EdgeTTSClient', () => ({
   EdgeTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
-    Object.assign(this, createMockTTSClient('edge'), { setSentenceGap: vi.fn() });
+    Object.assign(this, createMockTTSClient('edge'), {
+      setSentenceGap: vi.fn(),
+      setParagraphGap: vi.fn(),
+    });
   }),
 }));
 
@@ -191,6 +194,10 @@ describe('TTSController', () => {
   });
 
   afterEach(async () => {
+    // Before anything that awaits a real timer: a fake-timer test that fails
+    // mid-way never reaches its own useRealTimers, and would hang every test
+    // after it on this shared clock.
+    vi.useRealTimers();
     // Ensure controller is stopped after each test
     try {
       await controller.stop();
@@ -1189,6 +1196,50 @@ describe('TTSController', () => {
 
       expect(forwardSpy).toHaveBeenCalledWith(false, true);
     });
+
+    test('the paragraph gap is waited out as given, not re-scaled by the rate', async () => {
+      // The gap arrives already scaled for the rate (see scaleGapForRate);
+      // dividing it again here cut every paragraph pause in half at 2x (#5750).
+      vi.useFakeTimers();
+      await controller.init();
+      await controller.initViewTTS(0);
+      controller.setParagraphGap(0.3);
+      await controller.setRate(2);
+      const forwardSpy = vi.spyOn(controller, 'forward').mockResolvedValue();
+      speakingControllers.push(controller);
+
+      await controller.speak('<speak>hello</speak>');
+      await vi.advanceTimersByTimeAsync(290);
+      expect(forwardSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(forwardSpy).toHaveBeenCalledWith(false, true);
+      vi.useRealTimers();
+    });
+
+    test('a client that schedules its own gaps is not made to wait twice', async () => {
+      // The buffered client puts the paragraph pause on the audio clock, where
+      // the next paragraph's synthesis and decode hide inside it. Sleeping here
+      // as well would add the gap twice and put the network back on top (#5750).
+      vi.useFakeTimers();
+      await controller.init();
+      await controller.initViewTTS(0);
+      controller.setParagraphGap(0.3);
+      controller.ttsClient.getCapabilities = vi.fn().mockReturnValue({
+        wordBoundaries: true,
+        mediaClock: true,
+        gapControl: true,
+        liveRateChange: false,
+        scheduledGaps: true,
+      });
+      const forwardSpy = vi.spyOn(controller, 'forward').mockResolvedValue();
+      speakingControllers.push(controller);
+
+      await controller.speak('<speak>hello</speak>');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(forwardSpy).toHaveBeenCalledWith(false, true);
+      vi.useRealTimers();
+    });
   });
 
   describe('shutdown', () => {
@@ -1442,14 +1493,50 @@ describe('TTSController', () => {
       expect(startKeepAlive).not.toHaveBeenCalled();
     });
 
-    test('stops the keep-alive when playback is paused', async () => {
+    // A paused session is still a live session: its lock-screen / Bluetooth
+    // transport handlers run in the WebView. Dropping the keep-alive at pause
+    // let Android freeze the hidden page, after which Play from a headset only
+    // flipped the notification (the media session lives in the app process)
+    // while the reader never woke up to speak. See #5561.
+    test('keeps the keep-alive running while paused so transport still reaches the page', async () => {
       const c = await makeAndroidNativeController();
       vi.spyOn(c, 'forward').mockResolvedValue();
       c.speak('<speak>hello</speak>');
       await vi.waitFor(() => expect(startKeepAlive).toHaveBeenCalled(), { timeout: 5000 });
+      startKeepAlive.mockClear();
+      stopKeepAlive.mockClear();
 
       await c.pause();
 
+      expect(startKeepAlive).toHaveBeenCalled();
+      expect(stopKeepAlive).not.toHaveBeenCalled();
+    });
+
+    // Buffered engines earn the exemption for free only while they are actually
+    // speaking; a paused WebAudio session emits nothing either, so it needs the
+    // tone exactly as the direct-speak engines do.
+    test('starts the keep-alive when a buffered (Edge) session is paused', async () => {
+      const c = await makeAndroidNativeController();
+      c.ttsClient = c.ttsEdgeClient; // mediaClock === true
+      vi.spyOn(c, 'forward').mockResolvedValue();
+      c.speak('<speak>hello</speak>');
+      await vi.waitFor(() => expect(c.state).toBe('playing'), { timeout: 5000 });
+      expect(startKeepAlive).not.toHaveBeenCalled();
+
+      await c.pause();
+
+      expect(startKeepAlive).toHaveBeenCalled();
+    });
+
+    test('does not keep the page awake while paused off Android', async () => {
+      await controller.initViewTTS(0);
+      vi.spyOn(controller, 'forward').mockResolvedValue();
+      controller.speak('<speak>hello</speak>');
+      await vi.waitFor(() => expect(controller.state).toBe('playing'), { timeout: 5000 });
+
+      await controller.pause();
+
+      expect(startKeepAlive).not.toHaveBeenCalled();
       expect(stopKeepAlive).toHaveBeenCalled();
     });
 

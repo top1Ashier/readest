@@ -155,6 +155,29 @@ export const expandBookshelfSelection = (ids: string[], items: (Book | BooksGrou
   return [...hashes];
 };
 
+/**
+ * The books a bulk Download should actually fetch (#5244): the selection
+ * expanded through {@link expandBookshelfSelection}, narrowed to the books that
+ * live in the cloud but not on this device. The predicate matches the per-book
+ * "Download Book" affordance — a feed book has no file to fetch (#5307), and a
+ * book that was never uploaded or is already local has nothing to pull down.
+ */
+export const selectDownloadableBooks = (
+  ids: string[],
+  items: (Book | BooksGroup)[],
+  books: Book[],
+): Book[] => {
+  const hashes = new Set(expandBookshelfSelection(ids, items));
+  return books.filter(
+    (book) =>
+      hashes.has(book.hash) &&
+      !book.deletedAt &&
+      !isFeedBook(book) &&
+      !!book.uploadedAt &&
+      !book.downloadedAt,
+  );
+};
+
 // Calibre custom column names and values, flattened for searching (#4811).
 const getCalibreColumnsText = (item: Book) =>
   (item.metadata?.calibreColumns ?? [])
@@ -353,13 +376,24 @@ const compareBookByKey = (a: Book, b: Book, sortBy: string, uiLanguage: string):
  * @param secondarySortBy - Optional tiebreaker key applied when the primary
  *   comparison returns 0. Pass `'none'` (or omit) to disable. A Series secondary
  *   orders by series name then index; ties on both fall through to the primary tie.
+ * @param sortAscending - Direction of the primary key (default ascending).
+ * @param secondaryAscending - Direction of the secondary key (default ascending).
+ *   Independent of the primary direction (issue #5119), so callers must NOT apply
+ *   their own direction multiplier on top of this comparator.
  */
 export const createBookSorter =
-  (sortBy: string, uiLanguage: string, secondarySortBy: LibrarySecondarySortByType = 'none') =>
+  (
+    sortBy: string,
+    uiLanguage: string,
+    secondarySortBy: LibrarySecondarySortByType = 'none',
+    sortAscending: boolean = true,
+    secondaryAscending: boolean = true,
+  ) =>
   (a: Book, b: Book): number => {
     const primary = compareBookByKey(a, b, sortBy, uiLanguage);
-    if (primary !== 0 || secondarySortBy === 'none') return primary;
-    return compareBookByKey(a, b, secondarySortBy, uiLanguage);
+    if (primary !== 0) return primary * (sortAscending ? 1 : -1);
+    if (secondarySortBy === 'none') return 0;
+    return compareBookByKey(a, b, secondarySortBy, uiLanguage) * (secondaryAscending ? 1 : -1);
   };
 
 /**
@@ -599,14 +633,15 @@ export const resolveCurrentShelfBooks = (
 /**
  * Create a sorter for books within a group.
  * For series groups: sort by seriesIndex first (always ascending), then by global sort for items without index.
- * For other groupings: when a secondary key is supplied, sort by secondary key first (always ascending),
- *   with the primary global sort as tiebreaker. Without secondary, follow global sort setting.
- * @param sortAscending - When true (default), sort direction is ascending. Series index and the
- *   secondary key are always ascending regardless of this flag; the flag affects the fallback /
- *   primary tiebreaker only.
+ * For other groupings: when a secondary key is supplied, sort by secondary key first (in its own
+ *   direction), with the primary global sort as tiebreaker. Without secondary, follow global sort setting.
+ * @param sortAscending - When true (default), sort direction is ascending. Series index is always
+ *   ascending regardless of this flag; the flag affects the fallback / primary tiebreaker only.
  * @param secondarySortBy - When non-'none', acts as the *primary* within-group ordering for
  *   non-series groupings (matches the user's mental model: "group by author, then sort by series"
  *   should land series order inside each author).
+ * @param secondaryAscending - Direction of the secondary key, independent of `sortAscending`
+ *   (issue #5119).
  */
 export const createWithinGroupSorter =
   (
@@ -615,6 +650,7 @@ export const createWithinGroupSorter =
     uiLanguage: string,
     sortAscending: boolean = true,
     secondarySortBy: LibrarySecondarySortByType = 'none',
+    secondaryAscending: boolean = true,
   ) =>
   (a: Book, b: Book): number => {
     const sortDirection = sortAscending ? 1 : -1;
@@ -640,7 +676,7 @@ export const createWithinGroupSorter =
     // use it as the within-group primary order with the global key as tiebreaker.
     if (secondarySortBy !== 'none') {
       const bySecondary = compareBookByKey(a, b, secondarySortBy, uiLanguage);
-      if (bySecondary !== 0) return bySecondary;
+      if (bySecondary !== 0) return bySecondary * (secondaryAscending ? 1 : -1);
       return createBookSorter(sortBy, uiLanguage)(a, b) * sortDirection;
     }
 
@@ -813,6 +849,7 @@ export type BookContextMenuItemId =
   | 'download'
   | 'upload'
   | 'share'
+  | 'sendNearby'
   | 'delete';
 
 /**
@@ -887,6 +924,35 @@ export const pickFresherCover = (local: CoverFields, synced: CoverFields): Cover
     ? { coverHash: synced.coverHash, coverUpdatedAt: synced.coverUpdatedAt }
     : { coverHash: local.coverHash, coverUpdatedAt: local.coverUpdatedAt };
 
+type MetadataFields = Pick<Book, 'title' | 'author' | 'tags' | 'metadata' | 'metadataUpdatedAt'>;
+
+/**
+ * Field-level last-writer-wins for the metadata group (title, author, tags,
+ * metadata), by `metadataUpdatedAt` (issue #5438). Mirrors
+ * {@link pickFresherReadingStatus} / {@link pickFresherCover}: the row's
+ * `updatedAt` is dominated by page-turn progress, so a metadata edit must be
+ * resolved by its own timestamp or reading the book on another device would
+ * clobber it. Returns null when neither side's stamp is strictly fresher —
+ * notably the unstamped legacy case — so the caller keeps the row-level
+ * winner's fields (legacy behavior) instead of grafting.
+ */
+export const pickFresherMetadata = (
+  local: MetadataFields,
+  synced: MetadataFields,
+): MetadataFields | null => {
+  const localMs = local.metadataUpdatedAt ?? 0;
+  const syncedMs = synced.metadataUpdatedAt ?? 0;
+  if (localMs === syncedMs) return null;
+  const winner = localMs > syncedMs ? local : synced;
+  return {
+    title: winner.title,
+    author: winner.author,
+    tags: winner.tags,
+    metadata: winner.metadata,
+    metadataUpdatedAt: winner.metadataUpdatedAt,
+  };
+};
+
 /**
  * Resolve the ordered list of context-menu item ids for a book from its state.
  *
@@ -895,7 +961,10 @@ export const pickFresherCover = (local: CoverFields, synced: CoverFields): Cover
  * races on the Tauri IPC boundary, so the items land in a non-deterministic
  * order and the menu appears to shuffle on every open (issue #4389).
  */
-export const getBookContextMenuItemIds = (book: Book): BookContextMenuItemId[] => {
+export const getBookContextMenuItemIds = (
+  book: Book,
+  opts?: { localSend?: boolean },
+): BookContextMenuItemId[] => {
   const ids: BookContextMenuItemId[] = ['select', 'group'];
   ids.push(book.readingStatus === 'finished' ? 'markUnread' : 'markFinished');
   if (book.readingStatus !== 'abandoned') ids.push('markAbandoned');
@@ -916,6 +985,8 @@ export const getBookContextMenuItemIds = (book: Book): BookContextMenuItemId[] =
     // Share is offered for any local-or-uploaded book; the dialog uploads first
     // if the book hasn't been pushed yet.
     if (book.downloadedAt || book.uploadedAt) ids.push('share');
+    // LocalSend needs the file on this device; cloud-only books are excluded.
+    if (opts?.localSend && (book.downloadedAt || book.filePath)) ids.push('sendNearby');
   }
   ids.push('delete');
   return ids;

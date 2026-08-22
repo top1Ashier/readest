@@ -45,6 +45,11 @@ export interface SectionItem {
 
   loadText?: () => Promise<string | null>;
   createDocument: () => Promise<Document>;
+
+  // EPUB 3 Media Overlays: the manifest item of this section's SMIL file, or
+  // null when the section has no recorded narration. Populated by foliate's
+  // EPUB parser from the spine item's `media-overlay` attribute.
+  mediaOverlay?: { href: string; id: string } | null;
 }
 
 // A Calibre custom column embedded in the OPF as "user metadata"; parsed by
@@ -88,6 +93,17 @@ export type BookMetadata = {
 
   calibreColumns?: CalibreCustomColumn[];
   feedUrl?: string;
+
+  // Audiobookshelf mirrors. An ABS stub is fileless: its identity is the
+  // synthetic `abs://<serverId>/<itemId>` filePath, and the library badge is
+  // drawn from duration / media type / episode count. None of those have a
+  // cloud `books` column (and the push strips filePath as device-local), so
+  // they ride across inside this synced metadata payload, exactly as a feed
+  // book carries `feedUrl`. Built and read back in src/utils/audiobook.ts.
+  absSource?: string;
+  absMediaType?: 'podcast';
+  absEpisodeCount?: number;
+  absDuration?: number;
 };
 
 export interface BookDoc {
@@ -104,6 +120,21 @@ export interface BookDoc {
   transformTarget?: EventTarget;
   splitTOCHref(href: string): Array<string | number>;
   getCover(): Promise<Blob | null>;
+  // Present on formats that carry a real spine (EPUB); absent for the ones
+  // foliate-js gives synthetic per-index CFIs. Mirrors `view.resolveCFI`.
+  resolveCFI?(cfi: string): { index: number; anchor?: (doc: Document) => Range | number } | null;
+  // Formats backed by live parser state must be released explicitly: a PDF
+  // book holds a pdf.js document whose dedicated worker survives GC, so
+  // dropping the reference leaks the whole parsed file (#5387).
+  destroy?(): void | Promise<void>;
+
+  // Container access, present on EPUB. Recorded narration needs both: the SMIL
+  // files as text, the audio as blobs. Hrefs are zip paths, as resolved on
+  // manifest items.
+  loadText?(href: string): Promise<string | null>;
+  loadBlob?(href: string): Promise<Blob>;
+  // EPUB 3 `media:*` package metadata, used to name the narrator.
+  media?: { narrator?: string; duration?: number };
 }
 
 export const EXTS: Record<BookFormat, string> = {
@@ -117,6 +148,10 @@ export const EXTS: Record<BookFormat, string> = {
   FBZ: 'fbz',
   TXT: 'txt',
   MD: 'md',
+  // ABS books stream from the server and never have a real on-disk file, so
+  // this extension is never used to write or look up a file. It exists only
+  // to satisfy the Record<BookFormat, string> exhaustiveness check.
+  ABS: 'abs',
 };
 
 export const MIMETYPES: Record<BookFormat, string[]> = {
@@ -130,6 +165,8 @@ export const MIMETYPES: Record<BookFormat, string[]> = {
   FBZ: ['application/x-zip-compressed-fb2', 'application/zip'],
   TXT: ['text/plain'],
   MD: ['text/markdown', 'text/x-markdown'],
+  // Never matched against a real download; see the EXTS.ABS comment above.
+  ABS: ['application/vnd.audiobookshelf'],
 };
 
 export interface DocumentLoaderOptions {

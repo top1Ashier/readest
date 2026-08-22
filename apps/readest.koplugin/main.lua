@@ -40,6 +40,8 @@ ReadestSync.default_settings = {
     expires_at = nil,
     expires_in = nil,
     last_sync_at = nil,
+    localsend_enabled = false,
+    localsend_alias = nil,
 }
 
 -- ── Lifecycle ──────────────────────────────────────────────────────
@@ -65,6 +67,9 @@ function ReadestSync:init()
     -- uploads it to the user's Readest cloud. Skipped in reader context
     -- (FileManager.instance is nil there).
     self:registerFileDialogButton()
+    -- LocalSend receive (module singleton; re-attaches on context switch).
+    self.localsend = require("readest_localsend")
+    self.localsend:init(self)
 end
 
 -- Register Library actions (Open / Push / Pull) — available in both
@@ -150,13 +155,34 @@ function ReadestSync:registerFileDialogButton()
                 if not readest_format_for_ext(ext) then return nil end
                 return {
                     {
-                        text = _("Add to Readest"),
+                        text = _("Add to Readest library"),
                         enabled = plugin.settings.access_token ~= nil,
                         callback = function()
                             local fc = FileManager.instance and FileManager.instance.file_chooser
                             local dlg = fc and fc.file_dialog
                             if dlg then UIManager:close(dlg) end
                             plugin:addToReadest(file)
+                        end,
+                    },
+                }
+            end)
+        -- Second row (own registration id): shown only for supported book
+        -- formats, and only once a LocalSend helper binary exists for this
+        -- device (plugin.localsend:init() sets that during plugin init()).
+        FileManager.instance:addFileDialogButtons("readest_send_localsend",
+            function(file, is_file, _book_props)
+                if not is_file then return nil end
+                local ext = file:match("%.([^./\\]+)$")
+                if not readest_format_for_ext(ext) then return nil end
+                if not (plugin.localsend and plugin.localsend:isAvailable()) then return nil end
+                return {
+                    {
+                        text = _("Send to nearby Readest devices"),
+                        callback = function()
+                            local fc = FileManager.instance and FileManager.instance.file_chooser
+                            local dlg = fc and fc.file_dialog
+                            if dlg then UIManager:close(dlg) end
+                            plugin.localsend:sendFile(file)
                         end,
                     },
                 }
@@ -169,57 +195,73 @@ end
 -- action — the only new thing here is computing the partial_md5 from
 -- the file directly, since long-pressing in FileManager doesn't go
 -- through the Library row path.
-function ReadestSync:addToReadest(file)
+function ReadestSync:addToReadest(file, opts)
+    opts = opts or {}
     local lfs    = require("libs/libkoreader-lfs")
     local util   = require("util")
 
     if not self.settings.access_token then
-        UIManager:show(InfoMessage:new{
-            text = _("Sign in to Readest first."), timeout = 3,
-        })
+        if not opts.silent then
+            UIManager:show(InfoMessage:new{
+                text = _("Sign in to Readest first."), timeout = 3,
+            })
+        end
         return
     end
     local attr = lfs.attributes(file)
     if not attr or attr.mode ~= "file" then
-        UIManager:show(InfoMessage:new{
-            text = _("File not found."), timeout = 3,
-        })
+        if not opts.silent then
+            UIManager:show(InfoMessage:new{
+                text = _("File not found."), timeout = 3,
+            })
+        end
         return
     end
     local ext = file:match("%.([^./\\]+)$")
     local format = readest_format_for_ext(ext)
     if not format then
-        UIManager:show(InfoMessage:new{
-            text = _("Unsupported book format."), timeout = 3,
-        })
+        if not opts.silent then
+            UIManager:show(InfoMessage:new{
+                text = _("Unsupported book format."), timeout = 3,
+            })
+        end
         return
     end
 
     -- Hash via util.partialMD5 — same algorithm Readest uses, fast
-    -- (reads small chunks at fixed offsets, no full-file scan).
-    local progress = InfoMessage:new{
-        text = _("Hashing book…"),
-    }
-    UIManager:show(progress)
+    -- (reads small chunks at fixed offsets, no full-file scan). Runs
+    -- unconditionally regardless of opts.silent — only the InfoMessages
+    -- announcing it are gated.
+    local progress
+    if not opts.silent then
+        progress = InfoMessage:new{
+            text = _("Hashing book…"),
+        }
+        UIManager:show(progress)
+    end
     UIManager:nextTick(function()
         local hash = util.partialMD5(file)
-        UIManager:close(progress)
+        if progress then UIManager:close(progress) end
         if not hash then
-            UIManager:show(InfoMessage:new{
-                text = _("Could not read file."), timeout = 3,
-            })
+            if not opts.silent then
+                UIManager:show(InfoMessage:new{
+                    text = _("Could not read file."), timeout = 3,
+                })
+            end
             return
         end
-        self:_addLocalRow(file, hash, format, attr.size)
+        self:_addLocalRow(file, hash, format, attr.size, opts)
     end)
 end
 
-function ReadestSync:_addLocalRow(file, hash, format, _size)
+function ReadestSync:_addLocalRow(file, hash, format, _size, opts)
     local store = self:getLibraryStore()
     if not store then
-        UIManager:show(InfoMessage:new{
-            text = _("Sign in to Readest first."), timeout = 3,
-        })
+        if not (opts and opts.silent) then
+            UIManager:show(InfoMessage:new{
+                text = _("Sign in to Readest first."), timeout = 3,
+            })
+        end
         return
     end
 
@@ -262,12 +304,27 @@ function ReadestSync:_addLocalRow(file, hash, format, _size)
             .. hash:sub(1, 8) .. " to " .. tostring(now))
         local LibraryWidget = require("library.librarywidget")
         if LibraryWidget._menu then LibraryWidget.refresh() end
-        UIManager:show(InfoMessage:new{
-            text = _("Already in your Readest library:") .. " "
-                .. (existing.title or title),
-            timeout = 2,
-        })
+        if not (opts and opts.silent) then
+            UIManager:show(InfoMessage:new{
+                text = _("Already in your Readest library:") .. " "
+                    .. (existing.title or title),
+                timeout = 2,
+            })
+        end
         return
+    end
+
+    -- A sidecar from a previous read is the only metadata available without
+    -- opening the book. When one exists, stamp the fingerprint Readest's
+    -- importBook would (PDF-salted, issue #5411) so peers preserve it; with
+    -- no sidecar, leave meta_hash unset and Readest stamps it on first open.
+    local meta_hash
+    local ok, DocSettings = pcall(require, "docsettings")
+    if ok and DocSettings and DocSettings:hasSidecarFile(file) then
+        local doc_props = DocSettings:open(file):readSetting("doc_props")
+        if doc_props then
+            meta_hash = SyncConfig:computeMetadataHashInfo(doc_props, file).meta_hash
+        end
     end
 
     -- Add as a local-only row (cloud_present defaults to 0). Stamp
@@ -282,6 +339,7 @@ function ReadestSync:_addLocalRow(file, hash, format, _size)
         hash          = hash,
         title         = title,
         format        = format,
+        meta_hash     = meta_hash,
         file_path     = file,
         local_present = 1,
         created_at    = now,
@@ -296,10 +354,12 @@ function ReadestSync:_addLocalRow(file, hash, format, _size)
         .. " local_present=" .. tostring(row and row.local_present))
     local LibraryWidget = require("library.librarywidget")
     if LibraryWidget._menu then LibraryWidget.refresh() end
-    UIManager:show(InfoMessage:new{
-        text = _("Added to Readest:") .. " " .. title,
-        timeout = 2,
-    })
+    if not (opts and opts.silent) then
+        UIManager:show(InfoMessage:new{
+            text = _("Added to Readest:") .. " " .. title,
+            timeout = 2,
+        })
+    end
 end
 
 function ReadestSync:onAddToReadest(file)
@@ -396,6 +456,12 @@ function ReadestSync:_uploadBookRow(store, file, hash, format)
         end
     end
 
+    -- Uploading introduces the book to the fleet, so stamp the same
+    -- fingerprint Readest's importBook would; peers preserve whatever is
+    -- stamped here. getMetaHash keeps an existing fleet value if the row
+    -- already carries one.
+    local meta_hash = SyncConfig:getMetaHash(self.ui, store)
+
     -- Same row shape addToReadest writes, so both entry points produce the
     -- same row for the same book. _clear_fields un-tombstones a previously
     -- deleted book: a bare deleted_at = nil would be dropped by Lua's table
@@ -404,6 +470,7 @@ function ReadestSync:_uploadBookRow(store, file, hash, format)
         hash          = hash,
         title         = title,
         format        = format,
+        meta_hash     = meta_hash,
         file_path     = file,
         local_present = 1,
         created_at    = (existing and existing.created_at) or now,
@@ -525,6 +592,25 @@ function ReadestSync:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Receive via LocalSend"),
+                enabled_func = function()
+                    return self.localsend:isAvailable()
+                end,
+                checked_func = function()
+                    return self.settings.localsend_enabled == true
+                end,
+                callback = function()
+                    self.localsend:toggle()
+                end,
+            },
+            {
+                text_func = function()
+                    return self.localsend:statusText()
+                end,
+                enabled_func = function() return false end,
+                separator = true,
+            },
+            {
                 text = _("Upload current book to Readest"),
                 enabled_func = function()
                     return self.settings.access_token ~= nil and self.ui.document ~= nil
@@ -532,7 +618,6 @@ function ReadestSync:addToMainMenu(menu_items)
                 callback = function()
                     self:uploadCurrentBook()
                 end,
-                separator = true,
             },
             {
                 text = _("Push reading progress now"),
@@ -636,7 +721,9 @@ end
 
 function ReadestSync:getBookIdentifiers()
     local book_hash = SyncConfig:getDocumentIdentifier(self.ui)
-    local meta_hash = SyncConfig:getMetaHash(self.ui)
+    -- The library store may hold the fleet-stamped meta_hash for this book
+    -- (pulled from the cloud); getMetaHash prefers it over local computation.
+    local meta_hash = SyncConfig:getMetaHash(self.ui, self:getLibraryStore())
     return book_hash, meta_hash
 end
 
@@ -1004,6 +1091,14 @@ end
 -- devices where Suspend/Resume also fire on focus changes (Android),
 -- the debounce keeps this from hammering the API.
 function ReadestSync:onResume()
+    -- Guarded because some tests construct a plugin table without calling
+    -- init() (see onCloseWidget). The service kept running while suspended
+    -- only if the platform doesn't tear down networking on suspend; restart
+    -- unconditionally so a real suspend/resume cycle always ends up in sync
+    -- with the localsend_enabled setting.
+    if self.localsend and self.settings.localsend_enabled and NetworkMgr:isConnected() then
+        self.localsend:startService()
+    end
     if not (self.settings.auto_sync and self.settings.access_token and self.ui.document) then
         return
     end
@@ -1040,6 +1135,20 @@ function ReadestSync:onAnnotationsModified(items)
     end
 end
 
+function ReadestSync:onNetworkConnected()
+    if self.settings.localsend_enabled then
+        self.localsend:startService()
+    end
+end
+
+function ReadestSync:onNetworkDisconnected()
+    self.localsend:stopService()
+end
+
+function ReadestSync:onSuspend()
+    self.localsend:stopService()
+end
+
 function ReadestSync:onCloseWidget()
     if self.delayed_push_task then
         UIManager:unschedule(self.delayed_push_task)
@@ -1053,6 +1162,12 @@ function ReadestSync:onCloseWidget()
         UIManager:unschedule(self.reader_ready_pull_task)
         self.reader_ready_pull_task = nil
     end
+    -- The LocalSend poll belongs to the singleton service, not to this
+    -- plugin instance, and its closure captures the singleton (which
+    -- survives context switches). Tearing it down here raced the next
+    -- init()'s re-attach and could strand the service with no live poll
+    -- (incoming transfers silently ignored), so leave it running; it stops
+    -- only when the service does (stopService).
 end
 
 function ReadestSync:deletePluginSettings()

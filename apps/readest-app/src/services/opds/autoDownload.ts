@@ -5,8 +5,10 @@ import { downloadFile } from '@/libs/storage';
 import { getFileExtFromMimeType } from '@/libs/document';
 import { needsProxy, getProxiedURL, probeAuth, probeFilename } from '@/app/opds/utils/opdsReq';
 import { resolveURL, parseMediaType, getFileExtFromPath } from '@/app/opds/utils/opdsUtils';
-import { normalizeOPDSCustomHeaders } from '@/app/opds/utils/customHeaders';
+import { normalizeCustomHeaders } from '@/utils/customHeaders';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
+import { applyOPDSCover } from './cover';
+import { applyOPDSMetadata } from './metadata';
 import { checkFeedForNewItems } from './feedChecker';
 import {
   loadSubscriptionState,
@@ -31,7 +33,7 @@ async function downloadAndImport(
   const url = resolveURL(item.acquisitionHref, item.baseURL);
   const username = catalog.username ?? '';
   const password = catalog.password ?? '';
-  const customHeaders = normalizeOPDSCustomHeaders(catalog.customHeaders);
+  const customHeaders = normalizeCustomHeaders(catalog.customHeaders);
   const useProxy = needsProxy(url);
 
   let downloadUrl = useProxy ? getProxiedURL(url, '', true, customHeaders) : url;
@@ -93,6 +95,27 @@ async function downloadAndImport(
 
   const book = await appService.importBook(dstFilePath, books);
   if (!book) throw new Error(`importBook returned null for ${item.title}`);
+  // The catalog's curated metadata wins over the file's embedded record
+  // (#5270). Retry items rebuilt from FailedEntry carry none and skip.
+  if (item.metadata) {
+    applyOPDSMetadata(book, item.metadata);
+  }
+  // The catalog's own artwork wins over the one embedded in the file (#5270).
+  // Best effort: a failure here must not fail an otherwise good import.
+  if (item.coverHref) {
+    try {
+      await applyOPDSCover({
+        appService,
+        book,
+        coverUrl: resolveURL(item.coverHref, item.baseURL),
+        username,
+        password,
+        customHeaders,
+      });
+    } catch (error) {
+      console.warn(`[OPDS] failed to apply the feed cover for "${item.title}":`, error);
+    }
+  }
   try {
     await upsertOPDSSourceMapping(appService, {
       catalogId: catalog.contentId || catalog.id,
@@ -113,6 +136,7 @@ async function syncCatalog(
   catalog: OPDSCatalog,
   appService: AppService,
   books: Book[],
+  onBooksImported?: (newBooks: Book[]) => Promise<void>,
 ): Promise<{ newBooks: Book[]; state: OPDSSubscriptionState }> {
   const state = await loadSubscriptionState(appService, catalog.id);
 
@@ -194,6 +218,16 @@ async function syncCatalog(
     }
   }
 
+  // Persist the imported books BEFORE recording their entries as known: an
+  // entry in knownEntryIds is never downloaded again, so a kill between the
+  // two writes would otherwise lose the library rows for good while the
+  // marker survives (#5658). In the reverse order a kill merely costs a
+  // redundant re-download — imports are idempotent. A failed persist throws
+  // out of the catalog run, leaving the entries unknown for the next sync.
+  if (newBooks.length > 0) {
+    await onBooksImported?.(newBooks);
+  }
+
   state.knownEntryIds = pruneKnownEntryIds([...state.knownEntryIds, ...newKnownIds]);
   state.failedEntries = updatedFailedEntries;
   state.lastCheckedAt = Date.now();
@@ -215,6 +249,7 @@ export async function syncSubscribedCatalogs(
   catalogs: OPDSCatalog[],
   appService: AppService,
   books: Book[],
+  onBooksImported?: (newBooks: Book[]) => Promise<void>,
 ): Promise<SyncResult> {
   const eligible = catalogs.filter((c) => c.autoDownload && !c.disabled);
   if (eligible.length === 0) {
@@ -226,7 +261,7 @@ export async function syncSubscribedCatalogs(
 
   for (const catalog of eligible) {
     try {
-      const { newBooks } = await syncCatalog(catalog, appService, books);
+      const { newBooks } = await syncCatalog(catalog, appService, books, onBooksImported);
       allNewBooks.push(...newBooks);
     } catch (reason) {
       console.error(`OPDS sync: catalog "${catalog.name}" failed:`, reason);

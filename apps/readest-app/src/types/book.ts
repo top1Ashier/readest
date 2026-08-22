@@ -16,7 +16,9 @@ export type BookFormat =
   | 'FB2'
   | 'FBZ'
   | 'TXT'
-  | 'MD';
+  | 'MD'
+  // Streaming audiobook from an Audiobookshelf server; filePath is abs://<serverId>/<itemId>
+  | 'ABS';
 export type BookNoteType = 'bookmark' | 'annotation' | 'excerpt';
 export type ReadingStatus = 'unread' | 'reading' | 'finished' | 'abandoned';
 export type HighlightStyle = 'highlight' | 'underline' | 'squiggly';
@@ -115,6 +117,12 @@ export interface Book {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number | null;
+  /**
+   * Positive authorization to delete this book's directory from third-party
+   * file-sync providers. Must equal the current `deletedAt` tombstone; a plain
+   * tombstone hides the library row but preserves provider bytes (#5695).
+   */
+  fileSyncDeletionRequestedAt?: number | null;
 
   uploadedAt?: number | null;
   downloadedAt?: number | null;
@@ -129,8 +137,25 @@ export interface Book {
   readingStatus?: ReadingStatus;
   readingStatusUpdatedAt?: number; // ms; bumped only when readingStatus changes
   primaryLanguage?: string;
+  // The book carries its own recorded narration (EPUB 3 Media Overlays), so the
+  // library can badge it without opening the file. Derived from the file on
+  // every import, like `format` — not user data, so it needs no LWW timestamp.
+  hasNarration?: boolean;
+  duration?: number; // total audio length in seconds (ABS audiobooks)
+  // Marks this ABS stub as a podcast show rather than an audiobook. Audiobook
+  // shows remain unmarked (absMediaType undefined) — presence of the field
+  // set to 'podcast' is the only signal.
+  absMediaType?: 'podcast';
+  // Episode count for an ABS podcast show stub. Drives the library grid's
+  // episode-count badge and lets reconcileAbsBooks detect a new episode as a
+  // change even though title/author/duration are otherwise unchanged.
+  episodeCount?: number;
 
   metadata?: BookMetadata;
+  // Field-level LWW timestamp for the metadata group (title, author, tags,
+  // metadata), so a page-turn that wins whole-row LWW on updatedAt cannot
+  // clobber a metadata edit (mirrors readingStatusUpdatedAt / coverUpdatedAt).
+  metadataUpdatedAt?: number | null;
 }
 
 export interface BookGroupType {
@@ -199,6 +224,7 @@ export interface BookLayout {
   compactMarginPx?: number; // deprecated
   gapPercent: number;
   scrolled: boolean;
+  scrolledDirection: 'vertical' | 'horizontal';
   webtoonMode: boolean;
   noContinuousScroll: boolean;
   disableClick: boolean;
@@ -218,6 +244,10 @@ export interface BookLayout {
   hideScrollbar: boolean;
   /* Auto Scroll (#4998) speed as a percentage; 100 = AUTO_SCROLL_BASE_PX_PER_SEC. */
   autoScrollSpeed: number;
+  /* True when a session was still running as the book was closed, so reopening
+     the book resumes it (#5631). Per book: written with the global write
+     skipped, and cleared by any explicit stop. */
+  autoScrollRunning: boolean;
 }
 
 export interface BookStyle {
@@ -324,6 +354,12 @@ export interface TTSConfig {
   ttsSentenceGap: number;
   ttsParagraphGap: number;
   ttsVoice: string;
+  // Prefer the book's own recorded narration (EPUB 3 Media Overlays) over
+  // synthesized speech. Defaults on, so a read-along book is read by its
+  // narrator; picking a synthetic voice while that book is open clears it.
+  // Distinct from ttsVoice because ttsVoice inherits the global default and so
+  // cannot tell "never chose" from "chose a synthetic voice for this book".
+  ttsUseNarration: boolean;
   ttsLocation: string;
   ttsHighlightOptions: TTSHighlightOptions;
   ttsHighlightGranularity: TTSHighlightGranularity;
@@ -339,10 +375,17 @@ export interface TranslatorConfig {
   ttsReadAloudText: string;
 }
 
+// Markdown and plain text render the note template; JSON emits the
+// machine-readable file that Readest itself can import back (#5400).
+export type NoteExportFormat = 'markdown' | 'text' | 'json';
+
 export interface NoteExportConfig {
   includeTitle: boolean;
   includeAuthor: boolean;
   includeDate: boolean;
+  // Include a public cover image link; requires publishing the cover to the
+  // public bucket (sign-in) unless the book already has a public cover URL.
+  includeCoverImage: boolean;
   includeChapterTitles: boolean;
   includeQuotes: boolean;
   includeNotes: boolean;
@@ -353,7 +396,10 @@ export interface NoteExportConfig {
   noteSeparator: string;
   useCustomTemplate: boolean;
   customTemplate: string;
+  // Superseded by `exportFormat`; kept so configs written before the JSON
+  // option existed still pick the right format on load.
   exportAsPlainText: boolean;
+  exportFormat: NoteExportFormat;
   // Highlight colors/styles to omit from the export. Empty arrays export
   // everything; storing exclusions keeps colors/styles added later included
   // by default (#4801).
@@ -529,6 +575,12 @@ export interface BookConfig {
   rsvpPosition?: { cfi: string; wordText: string };
   searchConfig?: Partial<BookSearchConfig>;
   viewSettings?: Partial<ViewSettings>;
+  /**
+   * A device-local recording paired with this ebook. The audio files live
+   * under Books/<hash>/audiobook/ and are deliberately excluded from cloud
+   * sync; ordinary reading progress remains the shared cross-device state.
+   */
+  audiobook?: PairedAudiobook;
 
   lastSyncedAtConfig?: number;
   lastSyncedAtNotes?: number;
@@ -537,6 +589,36 @@ export interface BookConfig {
   foliateImportedAt?: number;
 
   updatedAt: number;
+}
+
+export interface AudiobookFile {
+  id: string;
+  name: string;
+  path: string;
+  duration: number;
+}
+
+export interface AudiobookChapter {
+  id: string;
+  fileId: string;
+  label: string;
+  start: number;
+  end: number;
+}
+
+export interface AudiobookChapterMapping {
+  ebookChapterId: string;
+  audioChapterId: string;
+}
+
+export interface PairedAudiobook {
+  version: 1;
+  title?: string;
+  narrator?: string;
+  files: AudiobookFile[];
+  chapters: AudiobookChapter[];
+  mappings: AudiobookChapterMapping[];
+  createdAt: number;
 }
 
 export interface BookDataRecord {

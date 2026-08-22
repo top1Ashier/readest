@@ -18,13 +18,14 @@ import { isDemoBook } from '@/services/demoBooks';
 import { isFeedBook } from '@/services/rss/feedBookUrl';
 import { ensureFeedBookCover } from '@/services/rss/feedBook';
 import { runFileLibrarySyncPass } from '@/services/sync/file/runLibrarySync';
-import { checkMixedFleetOnce } from '@/services/sync/fleetDetection';
-import { useSyncContext } from '@/context/SyncContext';
 import {
   pickFresherReadingStatus,
   needsCoverRefresh,
   pickFresherCover,
+  pickFresherMetadata,
 } from '@/app/library/utils/libraryUtils';
+import { getPrimaryLanguage } from '@/utils/book';
+import { isAudiobook, parseAbsFilePath } from '@/utils/audiobook';
 
 export const useBooksSync = () => {
   const _ = useTranslation();
@@ -33,7 +34,6 @@ export const useBooksSync = () => {
   const { library, isSyncing, libraryLoaded } = useLibraryStore();
   const { setLibrary, setIsSyncing, setSyncProgress } = useLibraryStore();
   const { useSyncInited, syncedBooks, syncBooks, lastSyncedAtBooks } = useSync();
-  const { syncClient } = useSyncContext();
   const isPullingRef = useRef(false);
 
   const getNewBooks = useCallback(() => {
@@ -61,6 +61,12 @@ export const useBooksSync = () => {
       // peers chase a non-existent path instead of downloading).
       // `altFilePaths` (the other on-disk names that resolve to the same book)
       // is device-local for exactly the same reason.
+      //
+      // An ABS book is the one format whose `filePath` is NOT device-local —
+      // `abs://<serverId>/<itemId>` is its entire identity — so it keeps
+      // riding along in `metadata.absSource` (reconcileAbsBooks writes it) and
+      // is rebuilt by transformBookFromDB. The strip below still applies to it:
+      // the device-field convention holds, only the mirror crosses.
       .map(({ filePath: _filePath, altFilePaths: _altFilePaths, ...rest }): Book => rest);
     return {
       books: newBooks,
@@ -134,15 +140,10 @@ export const useBooksSync = () => {
     throttle(
       async () => {
         if (isPullingRef.current) return;
-        // Readest Cloud unchecked: the native book channel is gated, so the
-        // interval runs the read-only mixed-fleet probe instead — a device
-        // still writing natively would otherwise fork progress silently
-        // (the auto library sync itself is useLibraryFileSync's).
+        // Readest Cloud unchecked: the native book channel is gated (the auto
+        // library sync itself is useLibraryFileSync's).
         const settingsNow = useSettingsStore.getState().settings;
-        if (!isReadestCloudEnabled(settingsNow)) {
-          void checkMixedFleetOnce(syncClient, settingsNow, _);
-          return;
-        }
+        if (!isReadestCloudEnabled(settingsNow)) return;
         const newBooks = getNewBooks();
         if (!newBooks.lastSyncedAt) return;
         isPullingRef.current = true;
@@ -191,7 +192,16 @@ export const useBooksSync = () => {
         .library.filter(isDemoBook)
         .map((book) => book.hash),
     );
-    const cloudBooks = syncedBooks.filter((book) => !demoHashes.has(book.hash));
+    const cloudBooks = syncedBooks.filter(
+      // An ABS row arrives with its `abs://` filePath rebuilt from
+      // `metadata.absSource` (transformBookFromDB). A row that still has none
+      // — pushed before the mirror existed, when the push stripped filePath
+      // and carried nothing in its place — is dead on arrival: nothing can
+      // resolve the server or item it came from. Drop it rather than shelving
+      // an unopenable entry.
+      (book) =>
+        !demoHashes.has(book.hash) && !(isAudiobook(book) && !parseAbsFilePath(book.filePath)),
+    );
     if (!cloudBooks.length) return;
 
     // Process old books first so that when we update the library the order is preserved
@@ -230,6 +240,23 @@ export const useBooksSync = () => {
         const cover = pickFresherCover(oldBook, matchingBook);
         mergedBook.coverHash = cover.coverHash;
         mergedBook.coverUpdatedAt = cover.coverUpdatedAt;
+        // The metadata group merges on its own metadataUpdatedAt clock so a
+        // metadata edit survives losing whole-row LWW to page-turn progress
+        // (issue #5438). Null means neither side is fresher — the row-level
+        // winner already in mergedBook stands.
+        const meta = pickFresherMetadata(oldBook, matchingBook);
+        if (meta) {
+          mergedBook.title = meta.title;
+          mergedBook.author = meta.author;
+          mergedBook.tags = meta.tags;
+          mergedBook.metadata = meta.metadata;
+          mergedBook.metadataUpdatedAt = meta.metadataUpdatedAt;
+          // TTS reads primaryLanguage (not metadata.language); recompute it the
+          // same way the editing device did so the edit is effective here too.
+          if (meta.metadata) {
+            mergedBook.primaryLanguage = getPrimaryLanguage(meta.metadata.language);
+          }
+        }
         return mergedBook;
       }
       return oldBook;
@@ -249,11 +276,13 @@ export const useBooksSync = () => {
     // `uploadedAt` gates adoption so a peer never shelves a book whose file it
     // cannot fetch. A feed book has no file to fetch — it is rebuilt from
     // `metadata.feedUrl` — so it would never pass that gate and the
-    // subscription stayed stuck on the device that added it (issue #5307).
+    // subscription stayed stuck on the device that added it (issue #5307). An
+    // ABS book is fileless for the same reason: it streams from the
+    // Audiobookshelf server named in its `abs://` filePath.
     const newBooks = cloudBooks.filter(
       (newBook) =>
         !bookHashesInLibrary.has(newBook.hash) &&
-        (newBook.uploadedAt || isFeedBook(newBook)) &&
+        (newBook.uploadedAt || isFeedBook(newBook) || isAudiobook(newBook)) &&
         !newBook.deletedAt,
     );
 
@@ -264,6 +293,12 @@ export const useBooksSync = () => {
         appService && isFeedBook(newBook)
           ? await ensureFeedBookCover(appService, newBook)
           : await appService?.generateCoverImageUrl(newBook);
+      // primaryLanguage is not a cloud column; without this the reader later
+      // guesses it from the parsed document, ignoring a language the user set
+      // in the synced metadata — TTS reads primaryLanguage (issue #5438).
+      if (newBook.metadata?.language) {
+        newBook.primaryLanguage = getPrimaryLanguage(newBook.metadata.language);
+      }
       newBook.syncedAt = Date.now();
       updatedLibrary.push(newBook);
     };

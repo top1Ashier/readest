@@ -7,8 +7,10 @@ import { Book } from '@/types/book';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { useLibraryStore } from '@/store/libraryStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useSidebarStore } from '@/store/sidebarStore';
+import { useAndroidGamepadConnection } from '@/hooks/useAndroidGamepadConnection';
 import { useGamepad } from '@/hooks/useGamepad';
 import { useTranslation } from '@/hooks/useTranslation';
 import { SystemSettings } from '@/types/settings';
@@ -17,6 +19,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { UnlistenFn } from '@tauri-apps/api/event';
 import { tauriHandleClose, tauriHandleOnCloseWindow } from '@/utils/window';
 import { isTauriAppPlatform } from '@/services/environment';
+import { splitLibraryOpenIds } from '@/utils/audiobook';
 import { uniqueId } from '@/utils/misc';
 import { throttle } from '@/utils/throttle';
 import { eventDispatcher } from '@/utils/event';
@@ -36,8 +39,10 @@ import useBookShortcuts from '../hooks/useBookShortcuts';
 import Spinner from '@/components/Spinner';
 import SideBar from './sidebar/SideBar';
 import Notebook from './notebook/Notebook';
+import LocalSendManager from '@/components/localsend/LocalSendManager';
 import BooksGrid from './BooksGrid';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import AudiobookPairingDialog from './audiobook/AudiobookPairingDialog';
 
 const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ ids, settings }) => {
   const _ = useTranslation();
@@ -52,6 +57,7 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
   const { initViewState, getViewState, clearViewState } = useReaderStore();
   const { isSettingsDialogOpen, settingsDialogBookKey } = useSettingsStore();
   const [showDetailsBook, setShowDetailsBook] = useState<Book | null>(null);
+  const [audiobookBookKey, setAudiobookBookKey] = useState<string | null>(null);
   const [shareDialogState, setShareDialogState] = useState<{
     book: Book;
     cfi: string | null;
@@ -62,7 +68,13 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
   const [errorLoading, setErrorLoading] = useState(false);
 
   useBookShortcuts({ sideBarBookKey, bookKeys });
-  useGamepad();
+  const isAndroidApp = appService?.isAndroidApp === true;
+  const androidGamepadConnected = useAndroidGamepadConnection(isAndroidApp);
+  // Android's native bridge gates the Web Gamepad API so Chromium polls only
+  // while a controller exists. Other platforms retain the existing behavior.
+  useGamepad({
+    enabled: appService !== null && (!isAndroidApp || androidGamepadConnected),
+  });
 
   useEffect(() => {
     if (isInitiating.current) return;
@@ -70,7 +82,24 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
 
     const pathname = window.location.pathname;
     const bookIds = ids || searchParams?.get('ids') || pathname.split('/reader/')[1] || '';
-    const initialIds = bookIds.split(BOOK_IDS_SEPARATOR).filter(Boolean);
+    const requestedIds = bookIds.split(BOOK_IDS_SEPARATOR).filter(Boolean);
+
+    // A streaming audiobook has no document to load - a deep link naming one
+    // (a stale bookmark, an "Open With" link, etc.) must not reach
+    // initViewState/loadBookContent. A lone audiobook id redirects to the
+    // player; one mixed into a multi-book deep link is just dropped, and the
+    // rest of the reader opens normally. Same split the library's own open
+    // paths use (src/utils/audiobook.ts), so a stray ABS id is handled
+    // identically everywhere it could turn up.
+    const { getBookByHash } = useLibraryStore.getState();
+    const { audiobookHash, readerIds: initialIds } = splitLibraryOpenIds(
+      requestedIds,
+      getBookByHash,
+    );
+    if (audiobookHash) {
+      router.replace(`/player?id=${audiobookHash}`);
+      return;
+    }
     const initialBookKeys = initialIds.map((id) => `${id}-${uniqueId()}`);
     setBookKeys(initialBookKeys);
     const uniqueIds = new Set<string>();
@@ -97,6 +126,15 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const handleManageAudiobook = (event: CustomEvent) => {
+      const detail = event.detail as { bookKey?: string } | undefined;
+      if (detail?.bookKey) setAudiobookBookKey(detail.bookKey);
+    };
+    eventDispatcher.on('manage-audiobook', handleManageAudiobook);
+    return () => eventDispatcher.off('manage-audiobook', handleManageAudiobook);
   }, []);
 
   useEffect(() => {
@@ -296,7 +334,15 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
         onGoToLibrary={handleCloseBooksToLibrary}
       />
       {isSettingsDialogOpen && <SettingsDialog bookKey={settingsDialogBookKey} />}
+      {audiobookBookKey && getBookData(audiobookBookKey)?.bookDoc && (
+        <AudiobookPairingDialog
+          bookKey={audiobookBookKey}
+          bookDoc={getBookData(audiobookBookKey)!.bookDoc!}
+          onClose={() => setAudiobookBookKey(null)}
+        />
+      )}
       <Notebook />
+      <LocalSendManager />
       {showDetailsBook && (
         <BookDetailModal
           isOpen={!!showDetailsBook}

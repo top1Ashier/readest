@@ -27,10 +27,14 @@ vi.mock('@/app/reader/hooks/useTTSDownloads', () => ({
     chapters: [],
     statuses: new Map(),
     cacheBytes: 0,
-    download: { activeChapterKey: null, done: 0, total: 0 },
+    clearing: false,
+    items: [],
+    itemFor: () => undefined,
     downloadChapter: vi.fn(),
     downloadAll: vi.fn(),
-    cancel: vi.fn(),
+    cancelChapter: vi.fn(),
+    cancelAll: vi.fn(),
+    clearDownloads: vi.fn(),
     statusOf: () => 'none',
     refresh: vi.fn(),
   }),
@@ -126,6 +130,6 @@ describe('TTSControl', () => {
   test('shows the back-to-TTS-location pill when reading has drifted', () => {
     Object.assign(ttsState, { showBackToCurrentTTSLocation: true });
     render(<TTSControl bookKey='b1' gridInsets={gridInsets} />);
-    expect(screen.getByText('Back to TTS Location')).toBeTruthy();
+    expect(screen.getByText('Back to Read Aloud')).toBeTruthy();
   });
 });

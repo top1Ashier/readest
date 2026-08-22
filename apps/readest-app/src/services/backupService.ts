@@ -38,10 +38,12 @@ export const BACKUP_SETTINGS_BLACKLIST = [
   'customRootDir',
   'externalLibraryFolders',
   'autoImportFolders',
+  'autoImportFlattenFolders',
   'savedBookCoverForLockScreenPath',
   // Per-device identity — restoring causes sync identity / HLC collisions.
   'replicaDeviceId',
   'kosync.deviceId',
+  'bookorbit.deviceId',
   // Sync cursors — stale values make sync skip pulls or re-push everything.
   'lastSyncedAtBooks',
   'lastSyncedAtConfigs',
@@ -61,6 +63,9 @@ export const BACKUP_SETTINGS_BLACKLIST = [
   's3.deviceId',
   's3.lastSyncedAt',
   's3.providerSelectedAt',
+  'icloud.deviceId',
+  'icloud.lastSyncedAt',
+  'icloud.providerSelectedAt',
   'readestCloud.disabledAt',
   // Transient runtime state — book keys may not exist post-restore; screen
   // brightness is live device state.
@@ -74,13 +79,17 @@ export const BACKUP_SETTINGS_BLACKLIST = [
 
 /**
  * Credential dot-paths stripped from backups unless `includeCredentials`
- * is set. OPDS catalog credentials live inside the `opdsCatalogs` array
- * and are handled separately in `sanitizeSettingsForBackup`.
+ * is set. OPDS catalog and Audiobookshelf server credentials live inside
+ * the `opdsCatalogs` / `absServers` arrays and are handled separately in
+ * `sanitizeSettingsForBackup`.
  */
 export const BACKUP_SETTINGS_CREDENTIAL_FIELDS = [
   'kosync.username',
   'kosync.userkey',
   'kosync.password',
+  'bookorbit.username',
+  'bookorbit.userkey',
+  'bookorbit.password',
   'readwise.accessToken',
   'hardcover.accessToken',
   // S3 access keys are strong, long-lived cloud credentials — strip them from
@@ -127,6 +136,19 @@ export function sanitizeSettingsForBackup(
       clone.opdsCatalogs = clone.opdsCatalogs.map((catalog) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { username: _username, password: _password, ...rest } = catalog;
+        return rest;
+      });
+    }
+    if (Array.isArray(clone.absServers)) {
+      clone.absServers = clone.absServers.map((server) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const {
+          username: _username,
+          password: _password,
+          accessToken: _accessToken,
+          refreshToken: _refreshToken,
+          ...rest
+        } = server;
         return rest;
       });
     }

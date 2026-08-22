@@ -1,9 +1,8 @@
 import clsx from 'clsx';
 import dayjs from 'dayjs';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 import { MdEdit, MdDelete, MdContentCopy } from 'react-icons/md';
 
-import { marked } from 'marked';
 import { useEnv } from '@/context/EnvContext';
 import { BookNote, HighlightColor } from '@/types/book';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -19,17 +18,27 @@ import { buildAnnotationCopyMarkdown } from '@/utils/note';
 import { writeTextToClipboard } from '@/utils/clipboard';
 import { DEFAULT_NOTE_EXPORT_CONFIG } from '@/services/constants';
 import { removeBookNoteOverlays } from '../../utils/annotatorUtil';
+import { parseNoteMarkdown } from '../../utils/noteMarkdown';
+import { useSaveBooknoteNoteText } from '../../hooks/useSaveBooknoteNoteText';
+import { useInlineTextEditor } from '../../hooks/useInlineTextEditor';
 import TextButton from '@/components/TextButton';
-import TextEditor, { TextEditorRef } from '@/components/TextEditor';
+import TextEditor from '@/components/TextEditor';
 
 interface BooknoteItemProps {
   bookKey: string;
   item: BookNote;
   isNearest?: boolean;
   onClick?: () => void;
+  inlineNoteEditing?: boolean;
 }
 
-const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, onClick }) => {
+const BooknoteItem: React.FC<BooknoteItemProps> = ({
+  bookKey,
+  item,
+  isNearest,
+  onClick,
+  inlineNoteEditing,
+}) => {
   const _ = useTranslation();
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
@@ -41,9 +50,25 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
   const customColors = globalReadSettings.customHighlightColors;
 
   const { text, cfi, note } = item;
-  const editorRef = useRef<TextEditorRef>(null);
-  const [editorDraft, setEditorDraft] = useState(text || '');
-  const [inlineEditMode, setInlineEditMode] = useState(false);
+  const isBookmark = item.type === 'bookmark';
+  const saveBooknoteNoteText = useSaveBooknoteNoteText(bookKey);
+  const saveBookmarkText = (draftText: string) => {
+    const config = getConfig(bookKey);
+    if (!config || !draftText) return;
+    const { booknotes: annotations = [] } = config;
+    const existingIndex = annotations.findIndex((annotation) => item.id === annotation.id);
+    if (existingIndex === -1) return;
+    annotations[existingIndex]!.updatedAt = Date.now();
+    annotations[existingIndex]!.text = draftText;
+    const updatedConfig = updateBooknotes(bookKey, annotations);
+    if (updatedConfig) {
+      saveConfig(envConfig, bookKey, updatedConfig, settings);
+    }
+  };
+  const { editorRef, draftText, setDraftText, inlineEditMode, startEdit, cancelEdit, save } =
+    useInlineTextEditor(
+      isBookmark ? saveBookmarkText : (noteText) => saveBooknoteNoteText(item.id, noteText),
+    );
   const separatorWidth = useResponsiveSize(3);
   const size18 = useResponsiveSize(18);
 
@@ -57,10 +82,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
     [cfi, progress?.location, isNearest],
   );
 
-  // marked.parse is heavy when called on every list scroll re-render across
-  // hundreds of items. Cache by note text — note edits change item.note and
-  // bust the cache automatically.
-  const noteHtml = useMemo(() => (note ? marked.parse(note) : ''), [note]);
+  // parseNoteMarkdown is heavy when called on every list scroll re-render
+  // across hundreds of items. Cache by note text — note edits change
+  // item.note and bust the cache automatically.
+  const noteHtml = useMemo(() => (note ? parseNoteMarkdown(note) : ''), [note]);
 
   // dayjs().fromNow() reformats every render; cache per createdAt.
   const createdAtLabel = useMemo(() => dayjs(item.createdAt).fromNow(), [item.createdAt]);
@@ -71,9 +96,6 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
 
     onClick?.();
     getView(bookKey)?.goTo(cfi);
-    if (note) {
-      setNotebookVisible(true);
-    }
   };
 
   const deleteNote = (note: BookNote) => {
@@ -123,26 +145,9 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
     });
   };
 
-  const editBookmark = () => {
-    setEditorDraft(text || '');
-    setInlineEditMode(true);
-  };
+  const editBookmark = () => startEdit(text || '');
 
-  const handleSaveBookmark = () => {
-    setInlineEditMode(false);
-    const config = getConfig(bookKey);
-    if (!config || !editorDraft) return;
-
-    const { booknotes: annotations = [] } = config;
-    const existingIndex = annotations.findIndex((annotation) => item.id === annotation.id);
-    if (existingIndex === -1) return;
-    annotations[existingIndex]!.updatedAt = Date.now();
-    annotations[existingIndex]!.text = editorDraft;
-    const updatedConfig = updateBooknotes(bookKey, annotations);
-    if (updatedConfig) {
-      saveConfig(envConfig, bookKey, updatedConfig, settings);
-    }
-  };
+  const editNoteInline = () => startEdit(item.note || '');
 
   if (inlineEditMode) {
     return (
@@ -157,16 +162,17 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
           <TextEditor
             className='!leading-normal'
             ref={editorRef}
-            value={editorDraft}
-            onChange={setEditorDraft}
-            onSave={handleSaveBookmark}
-            onEscape={() => setInlineEditMode(false)}
+            value={draftText}
+            onChange={setDraftText}
+            onSave={save}
+            onEscape={cancelEdit}
             spellCheck={false}
+            autoFocus
           />
         </div>
         <div className='flex justify-end space-x-3 p-2' dir='ltr'>
-          <TextButton onClick={() => setInlineEditMode(false)}>{_('Cancel')}</TextButton>
-          <TextButton onClick={handleSaveBookmark} disabled={!editorDraft}>
+          <TextButton onClick={cancelEdit}>{_('Cancel')}</TextButton>
+          <TextButton onClick={save} disabled={isBookmark && !draftText}>
             {_('Save')}
           </TextButton>
         </div>
@@ -174,7 +180,8 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
     );
   }
 
-  const isEditable = item.note || item.type === 'bookmark';
+  const isEditable =
+    !!item.note || isBookmark || (!!inlineNoteEditing && item.type === 'annotation');
 
   return (
     <li
@@ -305,9 +312,15 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, isNearest, o
 
             {isEditable && (
               <button
-                onClick={item.type === 'bookmark' ? editBookmark : editNote.bind(null, item)}
+                onClick={
+                  item.type === 'bookmark'
+                    ? editBookmark
+                    : inlineNoteEditing
+                      ? editNoteInline
+                      : editNote.bind(null, item)
+                }
                 className='btn btn-ghost btn-xs p-0 text-blue-500 opacity-0 transition duration-300 ease-in-out hover:bg-transparent group-focus-within:opacity-100 group-hover:opacity-100'
-                aria-label={_('Edit')}
+                aria-label={item.note || item.type === 'bookmark' ? _('Edit') : _('Add Note')}
               >
                 <MdEdit size={size18} />
               </button>

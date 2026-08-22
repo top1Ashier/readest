@@ -418,10 +418,18 @@ foliate-fxl {
   position: relative;
 }
 
+/* Grow the hit area to the 44px mobile target (DESIGN.md) instead of bleeding
+   a fixed 12px past the icon: on narrow screens the reader header packs 32px
+   controls with 8px gaps, and a 12px bleed reached 4px into the neighboring
+   icon, so a tap on one icon fired the other. */
 .touch-target::before {
   content: '';
   position: absolute;
-  inset: -12px;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
 }
 
 .no-context-menu {
@@ -478,6 +486,15 @@ foliate-fxl {
   inset: -8px;
 }
 
+/* The desktop trio sits 8px apart, so -8px is the widest halo that still tiles
+   exactly — any more and a button would swallow its neighbor's edge. When
+   close is rendered alone (the reader header on mobile: minimize and maximize
+   need a window bar) there is no neighbor, so it takes the full 44px target
+   the tap deserves (#5401). */
+.window-button:only-child::before {
+  inset: -10px;
+}
+
 input[type='range'].slider-input {
   -webkit-appearance: none;
   appearance: none;
@@ -527,7 +544,14 @@ input[type='range'].slider-input {
   color: theme('colors.base-content') !important;
 }
 
-[data-eink='true'] [class*='bg-base-content'] {
+/* E-ink cannot render a translucent wash, so a tinted base-content surface is
+   flattened to solid ink. `[class*=…]` matches the class attribute as plain
+   text, so skip elements whose only match is variant-prefixed: `hover:`,
+   `not-eink:hover:`, `group-hover:` and friends were painted solid at rest, on
+   every screen, which swallowed the footer bar's page indicator whole (#5667)
+   and forced `eink-inverted` workarounds elsewhere (#4454). A variant that
+   really does want ink on e-ink (`eink:bg-base-content`) emits its own rule. */
+[data-eink='true'] [class*='bg-base-content']:not([class*=':bg-base-content']) {
   background-color: theme('colors.base-content') !important;
 }
 
