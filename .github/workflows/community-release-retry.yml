@@ -65,5 +65,12 @@ jobs:
             exit 1
           fi
           printf 'Uploading assets to %s:\n%s\n' "$target_tag" "${assets[@]}"
-          gh release view "$target_tag" --repo "$GITHUB_REPOSITORY" --json id,name,assets
-          gh release upload "$target_tag" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          if gh release view "$target_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$target_tag" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          else
+            gh release create "$target_tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Readest Community $target_tag" \
+              --notes "Community build artifacts for $target_tag. This is an unofficial community build."
+          fi
