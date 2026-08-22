@@ -218,7 +218,7 @@ jobs:
             gh release create "$tag" --verify-tag --title "$title" --notes "Community build artifacts for $tag. This is an unofficial community build."
           fi
 
-          mapfile -t assets < <(find release-assets -maxdepth 1 -type f \( \
+          mapfile -t assets < <(find release-assets -type f \( \
             -name '*.AppImage' -o \
             -name '*.deb' -o \
             -name '*.pkg.tar.zst' -o \
@@ -228,4 +228,5 @@ jobs:
             echo 'No community release assets were downloaded.' >&2
             exit 1
           fi
+          printf 'Uploading assets:\n%s\n' "${assets[@]}"
           gh release upload "$tag" "${assets[@]}" --clobber
